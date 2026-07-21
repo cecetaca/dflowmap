@@ -286,7 +286,7 @@ void DflowGenerator::prepareBitfieldExprForOpt(const char *lexpr_name,
   
   Expr *expr = new Expr;
   expr->type = E_BITFIELD;
-  expr->u.e.l = lExpr->u.e.l;
+  expr->u.e.l = lExpr;
   expr->u.e.r = new Expr;
   expr->u.e.r->type = E_BITFIELD;
   expr->u.e.r->u.e.l = new Expr;
