@@ -347,28 +347,15 @@ const char *ProcGenerator::EMIT_CONCAT(DflowGenerator *dflowGenerator,
 const char *ProcGenerator::EMIT_BITFIELD(DflowGenerator *dflowGenerator,
 					 Expr *expr,
 					 int &resSuffix,
-					 unsigned &resBW,
-					 bool isvar) {
+					 unsigned &resBW) {
   if (debug_verbose) {
     printf("Handle uni expr ");
     print_expr(stdout, expr);
     printf("\n");
   }
 
-  /* dummy: just want "var" as the expression */
-  Expr *lExpr;
-  if (isvar) {
-    lExpr = new Expr;
-  
-    lExpr->u.e.l = expr->u.e.l;
-    lExpr->type = E_VAR;
-    lExpr->u.e.r = NULL;
-  }
-  else {
-    lExpr = expr->u.e.l;
-  }
   const char *lexpr_name = printExpr(dflowGenerator,
-                                     lExpr,
+				     expr->u.e.l,
                                      resSuffix,
                                      resBW);
   
@@ -528,6 +515,7 @@ const char *ProcGenerator::printExpr(DflowGenerator *dflowGenerator,
 	tmpE->type = E_BITFIELD;
 	tmpE->u.e.l = lExpr;
 	tmpE->u.e.r = new Expr;
+	tmpE->u.e.r->type = E_BITFIELD;
 	tmpE->u.e.r->u.e.l = new Expr;
 	tmpE->u.e.r->u.e.r = new Expr;
 	tmpE->u.e.r->u.e.l->type = E_INT;
@@ -536,7 +524,7 @@ const char *ProcGenerator::printExpr(DflowGenerator *dflowGenerator,
 	tmpE->u.e.r->u.e.l->u.ival.v_extra = NULL;
 	tmpE->u.e.r->u.e.r->u.ival.v = expr->u.e.r->u.ival.v - 1;
 	tmpE->u.e.r->u.e.r->u.ival.v_extra = NULL;
-	return EMIT_BITFIELD (dflowGenerator, tmpE, resSuffix, resBW, false);
+	return EMIT_BITFIELD (dflowGenerator, tmpE, resSuffix, resBW);
       }
       if (resBW == 0) {
         Expr *rExpr = expr->u.e.r;
@@ -565,7 +553,7 @@ const char *ProcGenerator::printExpr(DflowGenerator *dflowGenerator,
       return EMIT_CONCAT(dflowGenerator, expr, resSuffix, resBW);
     }
     case E_BITFIELD: {
-      return EMIT_BITFIELD(dflowGenerator, expr, resSuffix, resBW, true);
+      return EMIT_BITFIELD(dflowGenerator, expr, resSuffix, resBW);
     }
     default: {
       print_expr(stdout, expr);
@@ -743,13 +731,7 @@ void ProcGenerator::collectExprUses(Expr *expr, StringVec &recordedOps) {
       break;
     }
     case E_BITFIELD: {
-      auto actId = (ActId *) expr->u.e.l;
-      char *varName = new char[10240];
-      getActIdName(sc, actId, varName, 10240);
-      if (searchStringVec(recordedOps, varName) == -1) {
-        updateOpUses(actId);
-        recordedOps.push_back(varName);
-      }
+      collectExprUses (expr->u.e.l, recordedOps);
       break;
     }
     default: {
