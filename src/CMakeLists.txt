@@ -21,9 +21,8 @@ add_executable(dflowmap
         DflowMapPass.cc
         DflowMapPass.h)
 target_link_libraries(dflowmap chpBackend dflowmap-core dflowmap-common ActPassLib ActLib ActCommon dl)
-if (EXISTS $ENV{ACT_HOME}/lib/libexpropt.a)
+if (EXISTS $ENV{ACT_HOME}/lib/libexpropt_sh.so)
     target_link_libraries(dflowmap ExprOpt)
-    target_link_libraries(dflowmap ABC)
     target_link_libraries(dflowmap pthread)
 endif ()
 if (EXISTS $ENV{ACT_HOME}/lib/libdflownetgen.a)
