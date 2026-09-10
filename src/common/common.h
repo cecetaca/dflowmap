@@ -27,6 +27,7 @@
 #include <string>
 #include <algorithm>
 #include <map>
+#include <iterator>
 
 #define MAX_PROC_NAME_LEN 102400
 #define SHORT_STRING_LEN 1024
