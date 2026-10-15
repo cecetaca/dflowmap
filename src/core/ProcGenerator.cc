@@ -524,8 +524,18 @@ const char *ProcGenerator::EMIT_BITFIELD(DflowGenerator *dflowGenerator,
 
   bw = hi - lo + 1;
 
+  /* the whole operand, or more (int(x, w) widening x): a copy, not a slice
+     -- the logic optimizer's Verilog indexes the operand, and Genus refuses
+     to index a 1-bit one */
+  int ow = _expr_width(expr->u.e.l, sc);
+  if (lo == 0 && ow > 0 && hi >= ow - 1 && expr->u.e.l->type != E_INT) {
+    dflowGenerator->printChpPort(lexpr_name, resSuffix, bw);
+    dflowGenerator->preparePortForOpt(finalExprName, lexpr_name, bw);
+    return finalExprName;
+  }
+
   dflowGenerator->printChpBitfieldExpr (lexpr_name,
-					hi, lo, 
+					hi, lo,
 					resSuffix, bw);
 
   dflowGenerator->prepareBitfieldExprForOpt(lexpr_name,
