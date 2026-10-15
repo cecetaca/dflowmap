@@ -1964,7 +1964,11 @@ int ProcGenerator::run(Process *p) {
     chpBackend->createChpBlock(p,1);
     return 0;
   }
-  chpBackend->printProcHeader(p, config_get_int ("act.refine_steps"));
+  /* the model's units at its top level, not in a refine block even with
+     -ref: the netlist (<proc>_impl) overrides them at its top level, and an
+     override of an instance declared in a refine block silently does not
+     apply -- the netlist then simulates as an empty process */
+  chpBackend->printProcHeader(p, 0);
   _flatten_dflow(p->getlang()->getdflow()->dflow, sc);   // struct support
   collectBitwidthInfo();
   collectOpUses();
@@ -1986,7 +1990,7 @@ int ProcGenerator::run(Process *p) {
     chpBackend->printBoolToIntConv (it.first, it.second);
   }
   
-  chpBackend->printProcEnding(config_get_int ("act.refine_steps"));
+  chpBackend->printProcEnding(0);
   return 0;
 }
 
