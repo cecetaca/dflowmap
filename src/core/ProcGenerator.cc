@@ -21,6 +21,7 @@
 
 #include "ProcGenerator.h"
 #include <common/int.h>
+#include <set>
 
 /*
  * isBoolMap's entry for c: a bool channel, registered at its first use if
@@ -118,7 +119,7 @@ void ProcGenerator::collectBitwidthInfo() {
     auto tmp = ActId::parseId(vx->getName());
     c = tmp->Canonical(p->CurScope());
     delete tmp;
-    int bitwidth = TypeFactory::bitWidth(vx->t);
+    int bitwidth = TypeFactory::totBitWidth(vx->t);
     if (bitwidth < 0) {
       if (debug_verbose) {
         printf("%s has negative bw %d!\n", varName, bitwidth);
@@ -1645,6 +1646,193 @@ char *ProcGenerator::nextAnon ()
   return buf;
 }
 
+/*
+ * Struct support.  dflowmap sizes every channel and variable as an int; a
+ * struct (or a channel carrying one) is the int of TypeFactory::totBitWidth
+ * bits that int() packs it into: fields in declaration order, the first in
+ * the most significant bits.  A field reference root.f[.g...] -- which is what
+ * ACT writes int(root) of a struct root as, the concatenation of its fields --
+ * becomes the bit slice root{hi..lo}, before anything else reads the
+ * expressions.
+ */
+static Expr *_mk_int(int v)
+{
+  Expr *e = new Expr();
+  e->type = E_INT;
+  e->u.ival.v = v;
+  e->u.ival.v_extra = NULL;
+  return e;
+}
+
+/* the struct behind an instance type: a struct, or a channel carrying one */
+static Data *_struct_of(InstType *it)
+{
+  if (!it) return nullptr;
+  if (TypeFactory::isChanType(it)) {
+    it = TypeFactory::getChanDataType(it);
+    if (!it) return nullptr;
+  }
+  if (!TypeFactory::isStructure(it)) return nullptr;
+  return dynamic_cast<Data *>(it->BaseType());
+}
+
+/* bits lo..hi of field path `f` within struct d's packing; false if unknown */
+static bool _field_slice(Data *d, ActId *f, int &lo, int &hi)
+{
+  if (!d || !f || f->arrayInfo()) return false;
+  int total = TypeFactory::totBitWidth(d);
+  int before = 0;
+  for (int i = 0; i < d->getNumPorts(); i++) {
+    InstType *ft = d->getPortType(i);
+    if (ft->arrayInfo()) return false;      // array fields: not handled
+    int w = TypeFactory::totBitWidth(ft);
+    if (w < 0) return false;
+    if (strcmp(d->getPortName(i), f->getName()) == 0) {
+      lo = total - before - w;
+      hi = total - before - 1;
+      if (f->Rest()) {
+        int slo, shi;
+        if (!_field_slice(_struct_of(ft), f->Rest(), slo, shi)) return false;
+        hi = lo + shi;
+        lo = lo + slo;
+      }
+      return true;
+    }
+    before += w;
+  }
+  return false;
+}
+
+/* function calls _flatten_fields left (not struct conversions) */
+static int _calls_left = 0;
+
+static Expr *_flatten_fields(Expr *e, Scope *sc)
+{
+  if (!e) return e;
+  switch (e->type) {
+  case E_VAR: {
+    ActId *id = (ActId *) e->u.e.l;
+    if (!id->Rest()) return e;
+    Data *d = _struct_of(sc->FullLookup(id->getName()));
+    int lo, hi;
+    if (!d || !_field_slice(d, id->Rest(), lo, hi)) return e;
+    Expr *v = new Expr();
+    v->type = E_VAR;
+    v->u.e.l = (Expr *) new ActId(id->getName(), id->arrayInfo());
+    v->u.e.r = NULL;
+    Expr *b = new Expr();
+    b->type = E_BITFIELD;
+    b->u.e.l = v;
+    b->u.e.r = new Expr();
+    b->u.e.r->type = E_BITFIELD;
+    b->u.e.r->u.e.l = _mk_int(lo);
+    b->u.e.r->u.e.r = _mk_int(hi);
+    return b;
+  }
+  case E_INT:
+  case E_TRUE:
+  case E_FALSE:
+    return e;
+  case E_BUILTIN_INT:
+    e->u.e.l = _flatten_fields(e->u.e.l, sc);
+    /* int(x) of a struct x, no width: x, which is already its packing */
+    if (!e->u.e.r && e->u.e.l && e->u.e.l->type == E_VAR
+        && _struct_of(sc->FullLookup((ActId *) e->u.e.l->u.e.l, NULL))) {
+      return e->u.e.l;
+    }
+    return e;
+  case E_BITFIELD:
+  case E_BUILTIN_BOOL:
+  case E_NOT:
+  case E_UMINUS:
+  case E_COMPLEMENT:
+    e->u.e.l = _flatten_fields(e->u.e.l, sc);
+    return e;
+  case E_QUERY:
+    e->u.e.l = _flatten_fields(e->u.e.l, sc);
+    e->u.e.r->u.e.l = _flatten_fields(e->u.e.r->u.e.l, sc);
+    e->u.e.r->u.e.r = _flatten_fields(e->u.e.r->u.e.r, sc);
+    return e;
+  case E_CONCAT:
+    for (Expr *x = e; x; x = x->u.e.r) x->u.e.l = _flatten_fields(x->u.e.l, sc);
+    return e;
+  case E_AND: case E_OR: case E_XOR:
+  case E_PLUS: case E_MINUS: case E_MULT: case E_DIV: case E_MOD:
+  case E_LSL: case E_LSR: case E_ASR:
+  case E_LT: case E_GT: case E_LE: case E_GE: case E_EQ: case E_NE:
+    e->u.e.l = _flatten_fields(e->u.e.l, sc);
+    e->u.e.r = _flatten_fields(e->u.e.r, sc);
+    return e;
+  case E_FUNCTION: {
+    /* T(x), the conversion of a packed value to struct T, which ACT
+       expands to a function named after T with one argument (the fields'
+       concatenation): flattened, it is its argument */
+    Function *f = (Function *) e->u.fn.s;
+    InstType *rt = f ? f->getRetType() : nullptr;
+    Expr *args = e->u.fn.r;
+    /* the conversion is the struct's own macro, named "<T's expanded
+       name>/<T's base name><>" (e.g. "ar<24,1>/ar<>") */
+    bool conv = false;
+    if (rt && TypeFactory::isStructure(rt) && args && args->type == E_LT && !args->u.e.r) {
+      const char *fn = f->getName(), *tn = rt->BaseType()->getName();
+      size_t tl = strlen(tn), bl = strcspn(tn, "<");
+      conv = strncmp(fn, tn, tl) == 0 && fn[tl] == '/'
+             && strncmp(fn + tl + 1, tn, bl) == 0 && fn[tl + 1 + bl] == '<';
+    }
+    /* int(x) of a struct x, the struct's int macro ("sb<4>/int<>"): x */
+    if (!conv && rt && TypeFactory::isIntType(rt) && args && args->type == E_LT
+        && !args->u.e.r && f) {
+      const char *fn = f->getName(), *sl = strrchr(fn, '/');
+      conv = sl && strcmp(sl, "/int<>") == 0;
+    }
+    if (conv) {
+      return _flatten_fields(args->u.e.l, sc);
+    }
+    _calls_left++;
+    for (Expr *x = args; x; x = x->u.e.r) x->u.e.l = _flatten_fields(x->u.e.l, sc);
+    return e;
+  }
+  default:
+    return e;
+  }
+}
+
+static void _flatten_dflow(list_t *l, Scope *sc)
+{
+  for (listitem_t *li = list_first (l); li; li = list_next (li)) {
+    auto *d = (act_dataflow_element *) list_value (li);
+    if (d->t == ACT_DFLOW_CLUSTER) {
+      _flatten_dflow(d->u.dflow_cluster, sc);
+    } else if (d->t == ACT_DFLOW_FUNC) {
+      d->u.func.lhs = _flatten_fields(d->u.func.lhs, sc);
+    }
+  }
+}
+
+static void _flatten_structs(Process *p, std::set<Process *> &done)
+{
+  if (!p || !p->isExpanded() || done.count(p)) return;
+  done.insert(p);
+  if (p->getlang() && p->getlang()->getdflow()) {
+    _flatten_dflow(p->getlang()->getdflow()->dflow, p->CurScope());
+  }
+  ActInstiter iter(p->CurScope());
+  for (iter = iter.begin(); iter != iter.end(); iter++) {
+    ValueIdx *vx = *iter;
+    if (TypeFactory::isProcessType(vx->t)) {
+      _flatten_structs(dynamic_cast<Process *>(vx->t->BaseType()), done);
+    }
+  }
+}
+
+int ProcGenerator::flattenStructs(Process *top)
+{
+  std::set<Process *> done;
+  _calls_left = 0;
+  _flatten_structs(top, done);
+  return _calls_left;
+}
+
 int ProcGenerator::run(Process *p) {
   auto stdNS = ActNamespace::Global()->findNS(Constant::STD_NAMESPACE);
   if (p->getns() == stdNS) return 0;
@@ -1665,6 +1853,7 @@ int ProcGenerator::run(Process *p) {
     return 0;
   }
   chpBackend->printProcHeader(p, config_get_int ("act.refine_steps"));
+  _flatten_dflow(p->getlang()->getdflow()->dflow, sc);   // struct support
   collectBitwidthInfo();
   collectOpUses();
   createCopyProcs();
