@@ -24,12 +24,6 @@
 
 ChpLibGenerator::ChpLibGenerator(FILE *chpLibFp, FILE *chpFp,
                                  FILE *confFp) {
-  for (unsigned i = 0; i < MAX_PROCESSES; i++) {
-    processes[i] = nullptr;
-  }
-  for (unsigned i = 0; i < MAX_PROCESSES; i++) {
-    instances[i] = nullptr;
-  }
   if (!chpLibFp || !confFp) {
     printf("Invalid file handler for CHP lib generator!\n");
     exit(-1);
@@ -44,28 +38,17 @@ ChpLibGenerator::ChpLibGenerator(FILE *chpLibFp, FILE *chpFp,
   this->chpFp = chpFp;
 }
 
+/* already printed?  (records it if not)  The tables were MAX_PROCESSES (500)
+   pointers: past 500 every lookup missed and each use printed the process
+   again -- the whole NIC has 657, ACT then refused the duplicate
+   definitions -- and a process name was kept as the caller's pointer, not a
+   copy */
 bool ChpLibGenerator::checkAndUpdateInstance(const char *instance) {
-  for (unsigned i = 0; i < MAX_PROCESSES; i++) {
-    if (instances[i] == nullptr) {
-      instances[i] = Strdup (instance);
-      return false;
-    } else if (!strcmp(instances[i], instance)) {
-      return true;
-    }
-  }
-  return false;
+  return !instances.insert(instance).second;
 }
 
 bool ChpLibGenerator::checkAndUpdateProcess(const char *process) {
-  for (unsigned i = 0; i < MAX_PROCESSES; i++) {
-    if (processes[i] == nullptr) {
-      processes[i] = process;
-      return false;
-    } else if (!strcmp(processes[i], process)) {
-      return true;
-    }
-  }
-  return false;
+  return !processes.insert(process).second;
 }
 
 void ChpLibGenerator::printMemConfig(const char *procName) {
