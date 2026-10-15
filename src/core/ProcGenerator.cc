@@ -511,13 +511,13 @@ const char *ProcGenerator::printExpr(DflowGenerator *dflowGenerator,
 
       if (expr->u.e.r) {
 	// create expr that is a bitfield!
-	Expr *tmpE = new Expr;
+	Expr *tmpE = new Expr();
 	tmpE->type = E_BITFIELD;
 	tmpE->u.e.l = lExpr;
-	tmpE->u.e.r = new Expr;
+	tmpE->u.e.r = new Expr();
 	tmpE->u.e.r->type = E_BITFIELD;
-	tmpE->u.e.r->u.e.l = new Expr;
-	tmpE->u.e.r->u.e.r = new Expr;
+	tmpE->u.e.r->u.e.l = new Expr();
+	tmpE->u.e.r->u.e.r = new Expr();
 	tmpE->u.e.r->u.e.l->type = E_INT;
 	tmpE->u.e.r->u.e.r->type = E_INT;
 	tmpE->u.e.r->u.e.l->u.ival.v = 0;

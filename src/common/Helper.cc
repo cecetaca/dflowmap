@@ -87,7 +87,7 @@ int searchStringVec(StringVec &strVec, const char *str) {
 }
 
 Expr *genExprFromStr(const char *str, int exprType) {
-  Expr *expr = new Expr;
+  Expr *expr = new Expr();
   auto newLActId = ActId::parseId(str);
   expr->type = exprType;
   expr->u.e.l = (Expr *) (newLActId);
@@ -95,7 +95,7 @@ Expr *genExprFromStr(const char *str, int exprType) {
 }
 
 Expr *genExprFromInt(unsigned long val) {
-  Expr *expr = new Expr;
+  Expr *expr = new Expr();
   expr->type = E_INT;
   expr->u.ival.v = val;
   expr->u.ival.v_extra = nullptr;
