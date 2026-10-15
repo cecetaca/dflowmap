@@ -22,6 +22,29 @@
 #include "ProcGenerator.h"
 #include <common/int.h>
 
+/*
+ * isBoolMap's entry for c: a bool channel, registered at its first use if
+ * collectBitwidthInfo did not see it -- an element of an array of bool
+ * channels (it saw only the array) or a sub-process's port (irq[0],
+ * ann.out); without the entry, no bool/int converter, and the model
+ * connected an int<1> port to a bool channel
+ */
+template<class M>
+static typename M::iterator _bool_entry(Scope *sc, M &m, act_connection *c)
+{
+  auto res = m.find(c);
+  if (res != m.end() || !c || c->getctype() == 0) return res;
+  ActId *id = c->toid();
+  InstType *it = sc->FullLookup(id, NULL);
+  delete id;
+  if (it && TypeFactory::isChanType(it)
+      && TypeFactory::isBoolType(TypeFactory::getChanDataType(it))) {
+    m.insert({c, 0});
+    return m.find(c);
+  }
+  return res;
+}
+
 const char *ProcGenerator::getOutputNormId (ActId *id)
 {
 
@@ -44,7 +67,7 @@ const char *ProcGenerator::getActIdOrCopyName(ActId *actId) {
       if (copyUse <= outUses) {
 	act_connection *c = actId->Canonical (sc);
         const char *normalizedName = getNormActIdName(actName);
-	auto res = isBoolMap.find (c);
+	auto res = _bool_entry (sc, isBoolMap, c);
 	if (res != isBoolMap.end()) {
 	  if (!(res->second & 0x1)) {
 	    chpBackend->printBoolToIntDecl (res->first, 0x1);
@@ -61,7 +84,7 @@ const char *ProcGenerator::getActIdOrCopyName(ActId *actId) {
       }
     } else {
       act_connection *c = actId->Canonical (sc);
-      auto res = isBoolMap.find (c);
+      auto res = _bool_entry (sc, isBoolMap, c);
       if (res != isBoolMap.end()) {
 	if (!(res->second & 0x1)) {
 	  chpBackend->printBoolToIntDecl (res->first, 0x1);
@@ -969,7 +992,7 @@ void ProcGenerator::createCopyProcs() {
       act_connection *actConnection = opUsesIt.first;
       unsigned bitwidth = getBitwidth(actConnection);
       char *inName = new char[10240];
-      auto lookup = isBoolMap.find (actConnection);
+      auto lookup = _bool_entry (sc, isBoolMap, actConnection);
       if (lookup != isBoolMap.end()) {
 	if (!(lookup->second & 0x1)) {
 	  chpBackend->printBoolToIntDecl (lookup->first, 0x1);
@@ -1117,7 +1140,7 @@ static void fixboolchan_outname (Scope *sc,
 				 int sz)
 {
   act_connection *conn_rhs = id->Canonical (sc);
-  auto res = isBoolMap.find (conn_rhs);
+  auto res = _bool_entry (sc, isBoolMap, conn_rhs);
   if (res != isBoolMap.end()) {
     if (!(res->second & 0x2)) {
       chpBackend->printBoolToIntDecl (res->first, 0x2);
