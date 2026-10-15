@@ -86,6 +86,9 @@ void ProcGenerator::collectBitwidthInfo() {
   for (inst = inst.begin(); inst != inst.end(); inst++) {
     ValueIdx *vx = *inst;
     if (TypeFactory::isParamType (vx->t)) continue;
+    /* a sub-process (ann in arb_mux): no width, its ports are looked up as
+       used (getBitwidth); -v used to stop here */
+    if (TypeFactory::isProcessType (vx->t)) continue;
 
     act_connection *c;
     const char *varName = vx->getName();
@@ -144,6 +147,18 @@ unsigned ProcGenerator::getBitwidth(act_connection *actConnection) {
     bitwidthMapIt = bitwidthMap.find (actConnection->parent);
     if (bitwidthMapIt != bitwidthMap.end()) {
       return bitwidthMapIt->second;
+    }
+  }
+  /* a port of a sub-instance (x.y, x[i].y), which the dataflow may use
+     directly: collectBitwidthInfo saw only x */
+  {
+    ActId *id = actConnection->toid();
+    InstType *it = p->CurScope()->FullLookup(id, NULL);
+    delete id;
+    int bw = it ? TypeFactory::totBitWidth(it) : -1;
+    if (bw > 0) {
+      bitwidthMap.insert({actConnection, bw});
+      return bw;
     }
   }
   char *varName = new char[10240];
