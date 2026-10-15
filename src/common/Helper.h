@@ -75,6 +75,37 @@ void copyFileToTargetDir(const char *srcFile,
                          const char *targetDir,
                          const char *errMsg);
 
+/*
+ * Structs and namespaces in the CHP model, which is one flat file of
+ * definitions with no namespaces and no struct types: text, ACT's printing of
+ * process p (its header, its scope, or its whole definition), with p named
+ * by its mangled name (namespace included, as the netlist names it), every
+ * user process it instantiates likewise, and every channel carrying a struct
+ * a channel of the int the struct packs into.
+ */
+std::string modelText(Process *p, const std::string &text);
+
+/*
+ * text, ACT's printing of p's scope, with a declaration for each process
+ * instance and channel it leaves out -- those of the process p is derived
+ * from (synth2's df_ <: the source's), or of a refine block's overrides
+ * (refine +{ ... }) -- which the connections it prints use
+ */
+std::string modelInstances(Process *p, const std::string &text);
+
+/* what print(fp) writes */
+template<class F>
+std::string printToString(F print) {
+  char *buf = nullptr;
+  size_t len = 0;
+  FILE *mf = open_memstream(&buf, &len);
+  print(mf);
+  fclose(mf);
+  std::string s(buf ? buf : "");
+  free(buf);
+  return s;
+}
+
 template<class T>
 bool hasInVector(Vector<T> &vector, T &elem) {
   return std::find(vector.begin(), vector.end(), elem) != vector.end();

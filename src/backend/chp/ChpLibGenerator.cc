@@ -424,12 +424,9 @@ void ChpLibGenerator::printChpBlock(Process *p, int where) {
     exit(-1);
   }
 #endif
-  if (p->getlang()->getchp()) {
-    p->Print(chpFp);
-  }
-  else {
-    p->Print(chpFp);
-  }
+  /* structs and namespaces: see modelText */
+  fputs(modelText(p, printToString([&](FILE *f) { p->Print(f); })).c_str(),
+        chpFp);
 }
 
 void ChpLibGenerator::printCustomNamespace(ActNamespace *ns) {
@@ -441,6 +438,10 @@ void ChpLibGenerator::printCustomNamespace(ActNamespace *ns) {
     Type *t = *it;
     auto p = dynamic_cast<Process *>(t);
     if (!p) continue;
+    /* the model has every other process at the top level, under its mangled
+       name (see modelText); a copy here would name the namespace's own
+       types, which the model does not define */
+    if (!isMEM) continue;
     if (p->isExpanded()) {
       p->Print(chpLibFp);
       if (isMEM) {
