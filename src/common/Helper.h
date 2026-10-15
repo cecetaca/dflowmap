@@ -43,6 +43,8 @@ int searchStringVec(StringVec &strVec, const char *str);
 
 Expr *genExprFromInt(unsigned long val);
 
+Expr *genExprFromIntName(const char *name);
+
 Expr *genExprFromStr(const char *str, int exprType);
 
 Expr *getExprFromName(const char *name,

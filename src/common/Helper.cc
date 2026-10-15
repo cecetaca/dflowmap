@@ -20,6 +20,8 @@
  */
 
 #include "Helper.h"
+#include <common/int.h>
+#include <string>
 
 void normalizeName(char *src, char toDel, char newChar) {
   char *pos = strchr(src, toDel);
@@ -102,6 +104,29 @@ Expr *genExprFromInt(unsigned long val) {
   return expr;
 }
 
+/*
+ * a constant by the name printExpr gives it, int(V,W): V past 64 bits (a
+ * BigInt printed in hex, int(0x...,W)) as an E_INT with its BigInt in
+ * v_extra, as ACT keeps one -- std::stoul threw on it
+ */
+Expr *genExprFromIntName(const char *name) {
+  std::string s(name + 4);
+  size_t comma = s.find(',');
+  std::string v = s.substr(0, comma);
+  bool hex = v.compare(0, 2, "0x") == 0 || v.compare(0, 2, "0X") == 0;
+  if (!hex || v.size() <= 2 + 16) {
+    return genExprFromInt(std::stoul(v, NULL, 0));
+  }
+  int w = comma == std::string::npos ? 4 * (int) (v.size() - 2)
+                                     : std::stoi(s.substr(comma + 1));
+  auto b = new BigInt(w, 0, 0);
+  *b = v;
+  b->setWidth(w);
+  Expr *expr = genExprFromInt(b->getVal(0));
+  expr->u.ival.v_extra = b;
+  return expr;
+}
+
 Expr *getExprFromName(const char *name,
                       Map<const char *, Expr *> &exprMap,
                       bool exitOnMissing,
@@ -118,14 +143,14 @@ Expr *getExprFromName(const char *name,
   Expr *newExpr = nullptr;
   if (exprType == E_INT) {
     if (strncmp ("int(", name, 4) == 0) {
-      newExpr = genExprFromInt(std::stoul(std::string(name+4), NULL, 0));
+      newExpr = genExprFromIntName(name);
     }
     else {
       newExpr = genExprFromInt(std::stoul(std::string(name), NULL, 0));
     }
   } else {
     if (strncmp ("int(", name, 4) == 0) {
-      newExpr = genExprFromInt(std::stoul(std::string(name+4), NULL, 0));
+      newExpr = genExprFromIntName(name);
     }
     else {
       newExpr = genExprFromStr(name, exprType);
