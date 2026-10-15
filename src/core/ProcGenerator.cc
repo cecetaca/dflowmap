@@ -1535,6 +1535,19 @@ void ProcGenerator::handleNormDflowElement(act_dataflow_element *d,
       char *inputName = new char[10240];
       getActIdName(sc, input, inputName, 10240);
       unsigned bw = getBitwidth(input->Canonical(sc));
+      /* a bool channel is sunk through its bool -> int converter, as it is
+         read anywhere else (getActIdOrCopyName): lib::sink takes an int
+         (client_axis_sink's wr_done[i] -> *) */
+      auto res = _bool_entry (sc, isBoolMap, input->Canonical (sc));
+      if (res != isBoolMap.end()) {
+	if (!(res->second & 0x1)) {
+	  chpBackend->printBoolToIntDecl (res->first, 0x1);
+	}
+	res->second = res->second | 0x1;
+	char *tmp = _getNormActIdName (inputName);
+	snprintf (inputName, 10240, "_toint_%s", tmp);
+	FREE (tmp);
+      }
       createSink(inputName, bw);
       if (debug_verbose) {
         printf("%s is not used anywhere!\n", inputName);
