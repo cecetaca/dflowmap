@@ -192,6 +192,95 @@ unsigned ProcGenerator::getBitwidth(act_connection *actConnection) {
   exit(-1);
 }
 
+/*
+ * An expression's width by ACT's rules, or -1 if unknown: for what
+ * act_type_expr cannot type -- a bit slice of a struct channel, which the
+ * struct support writes for (int(x)){hi..lo}, leaves it width 0.
+ */
+static int _expr_width(Expr *e, Scope *sc)
+{
+  if (!e) return -1;
+  int l, r;
+  switch (e->type) {
+  case E_VAR: {
+    InstType *it = sc->FullLookup((ActId *) e->u.e.l, NULL);
+    return it ? TypeFactory::totBitWidth(it) : -1;
+  }
+  case E_INT: {
+    unsigned long v = e->u.ival.v;
+    int w = 1;
+    while (v >> w) w++;
+    return w;
+  }
+  case E_TRUE:
+  case E_FALSE:
+  case E_BUILTIN_BOOL:
+  case E_LT: case E_GT: case E_LE: case E_GE: case E_EQ: case E_NE:
+    return 1;
+  case E_BITFIELD:
+    if (!e->u.e.r || !e->u.e.r->u.e.r || e->u.e.r->u.e.r->type != E_INT)
+      return -1;
+    if (!e->u.e.r->u.e.l) return 1;
+    if (e->u.e.r->u.e.l->type != E_INT) return -1;
+    return (int) (e->u.e.r->u.e.r->u.ival.v - e->u.e.r->u.e.l->u.ival.v + 1);
+  case E_BUILTIN_INT:
+    if (e->u.e.r) {
+      return e->u.e.r->type == E_INT ? (int) e->u.e.r->u.ival.v : -1;
+    }
+    return _expr_width(e->u.e.l, sc);
+  case E_CONCAT: {
+    int w = 0;
+    for (Expr *x = e; x; x = x->u.e.r) {
+      int k = _expr_width(x->u.e.l, sc);
+      if (k <= 0) return -1;
+      w += k;
+    }
+    return w;
+  }
+  case E_NOT: case E_COMPLEMENT: case E_UMINUS:
+    return _expr_width(e->u.e.l, sc);
+  case E_QUERY:
+    l = _expr_width(e->u.e.r->u.e.l, sc);
+    r = _expr_width(e->u.e.r->u.e.r, sc);
+    return (l <= 0 || r <= 0) ? -1 : (l > r ? l : r);
+  default:
+    break;
+  }
+  l = _expr_width(e->u.e.l, sc);
+  r = _expr_width(e->u.e.r, sc);
+  if (l <= 0 || r <= 0) return -1;
+  switch (e->type) {
+  case E_AND: case E_OR: case E_XOR:
+    return l > r ? l : r;
+  case E_PLUS: case E_MINUS:
+    return (l > r ? l : r) + 1;
+  case E_MULT:
+    return l + r;
+  case E_DIV:
+    return l;
+  case E_MOD:
+    return r;
+  case E_LSL:
+    return r < 16 ? l + (1 << r) - 1 : -1;
+  case E_LSR: case E_ASR:
+    return l;
+  default:
+    return -1;
+  }
+}
+
+/*
+ * The width the logic optimizer is to give an intermediate result: its own
+ * (bw, from act_type_expr, else by ACT's rules), not the function unit's
+ * output width (resBW), which truncates it -- `(a & 0xfff) ...` inside a
+ * 1-bit test kept 1 bit.
+ */
+static unsigned _own_width(int &bw, unsigned resBW, Expr *e, Scope *sc)
+{
+  if (bw <= 0) bw = _expr_width(e, sc);
+  return bw > 0 ? (unsigned) bw : resBW;
+}
+
 const char *ProcGenerator::EMIT_QUERY(DflowGenerator *dflowGenerator,
                                       Expr *expr,
                                       int &resSuffix,
@@ -233,8 +322,9 @@ const char *ProcGenerator::EMIT_QUERY(DflowGenerator *dflowGenerator,
   resSuffix++;
   sprintf(finalExprName, "res%d", resSuffix);
  
-  int bw;
+  int bw = 0;
   act_type_expr (sc, expr, &bw, 1);
+  unsigned own_bw = _own_width(bw, resBW, expr, sc);
  
   dflowGenerator->printChpQueryExpr(cexpr_name,
                                     lexpr_name,
@@ -256,7 +346,7 @@ const char *ProcGenerator::EMIT_QUERY(DflowGenerator *dflowGenerator,
                                          finalExprName,
                                          exprType,
                                          bodyExprType,
-                                         resBW);
+                                         own_bw);
   return finalExprName;
 }
 
@@ -291,8 +381,9 @@ const char *ProcGenerator::EMIT_BIN(DflowGenerator *dflowGenerator,
 
   int bw = 0;
   act_type_expr (sc, expr, &bw, 1);
+  unsigned own_bw = _own_width(bw, resBW, expr, sc);
 
-  
+
   dflowGenerator->printChpBinExpr(op,
                                   lexpr_name,
                                   rexpr_name,
@@ -311,7 +402,7 @@ const char *ProcGenerator::EMIT_BIN(DflowGenerator *dflowGenerator,
                                        rType,
                                        finalExprName,
                                        exprType,
-                                       resBW);
+                                       own_bw);
   return finalExprName;
 }
 
@@ -336,8 +427,9 @@ const char *ProcGenerator::EMIT_UNI(DflowGenerator *dflowGenerator,
   resSuffix++;
   sprintf(finalExprName, "res%d", resSuffix);
 
-  int bw;
+  int bw = 0;
   act_type_expr (sc, expr, &bw, 1);
+  unsigned own_bw = _own_width(bw, resBW, expr, sc);
   
   dflowGenerator->printChpUniExpr(op, lexpr_name, resSuffix, bw);
   int lType = (lExpr->type == E_INT) ? E_INT : E_VAR;
@@ -346,9 +438,11 @@ const char *ProcGenerator::EMIT_UNI(DflowGenerator *dflowGenerator,
                                        lType,
                                        finalExprName,
                                        exprType,
-                                       resBW);
+                                       own_bw);
   return finalExprName;
 }
+
+static int _concat_width(Expr *e, Scope *sc) { return _expr_width(e, sc); }
 
 const char *ProcGenerator::EMIT_CONCAT(DflowGenerator *dflowGenerator,
                                        Expr *expr,
@@ -368,17 +462,25 @@ const char *ProcGenerator::EMIT_CONCAT(DflowGenerator *dflowGenerator,
     expr = expr->u.e.r;
   }
 
-  int bw;
-  act_type_expr (sc, orig_expr, &bw, 1);
+  // the concatenation's own width (act_type_expr cannot type the bit slices
+  // the struct support writes, and leaves bw unset)
+  int bw = _concat_width(orig_expr, sc);
+  if (bw <= 0) {
+    bw = -1;
+    act_type_expr (sc, orig_expr, &bw, 1);
+  }
 
   resSuffix++;
   sprintf(finalExprName, "res%d", resSuffix);
-  
+
   dflowGenerator->printChpConcatExpr(operandList, resSuffix, bw);
+  // the concatenation's own width, not the caller's: inside int(..., w) the
+  // caller's is w, and the truncation is the caller's bit slice
+  unsigned catBW = bw > 0 ? (unsigned) bw : resBW;
   dflowGenerator->prepareConcatExprForOpt(operandList,
                                           opTypeList,
                                           finalExprName,
-                                          resBW);
+                                          catBW);
   return finalExprName;
 }
 
